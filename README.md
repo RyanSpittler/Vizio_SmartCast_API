@@ -1,6 +1,8 @@
 # Vizio SmartCast API (2016+ Models)
 
 ## Overview
+
+### Televisions
 * API Server runs on port `9000` using https. Will not respond to http.
 
 	*Don't port forward it. There are some commands that can be executed 
@@ -25,10 +27,27 @@ without authentication.*
 * This does not cover any MyVizio Account APIs.
 * See an issue? Have a question? Open an issue, or find me on twitter [@exiva](https://twitter.com/exiva)
 
-## Display Discovery
+### Sound Bars
+> According to [this forum post from aarondr.](http://www.avsforum.com/forum/195-soundbars/2392962-2016-vizio-smartcast-sound-bars-18.html#post45207065)
+
+1. API Server accepts a variety of ports.
+    * Port `9001` is the one to use. Responds to http and doesn't require authentication. As the forum post states, it is hosting Django web services in debug mode, so you can use the exception reporting to deduce how to fix your errors. 
+    * Port `9000` responds to https.
+    * Port `10001` is apparently open, but it is unclear what it is used for.
+    * Ports `8008` and `8009` are apparently used for Google Casting.
+2. Much of what is found to work was in the `restlog` that Django provides. Use the SmartCast app on your phone to create requests, then inspect the logs.
+> `curl http://myVizioSoundBarIP:9001/restlog`
+3. Unsure if it is necessary, but visiting the `version` endpoint may have helped force the web services into debug mode.
+4. If you send a request that hangs, you may need to cycle the power to reset the server. Unplugging may be necessary.
+
+## Device Discovery
 
 ### Find IP Address
-Perform an [SSDP query](https://sdkdocs.roku.com/display/sdkdoc/External+Control+Guide#ExternalControlGuide-SSDP(SimpleServiceDiscoveryProtocol)) for `ST: urn:schemas-kinoma-com:device:shell:1`
+
+1. Lookup the IP Address in the SmartCast app on your phone.
+> Go to Device Settings > [Device Name] > Network
+
+2. Perform an [SSDP query](https://sdkdocs.roku.com/display/sdkdoc/External+Control+Guide#ExternalControlGuide-SSDP(SimpleServiceDiscoveryProtocol)) for `ST: urn:schemas-kinoma-com:device:shell:1`
 
 #### Example
 ```
@@ -40,7 +59,7 @@ ST: urn:schemas-kinoma-com:device:shell:1
 ```
 
 ## Pairing
-***required to control set.***
+***Required to control television set. Not required for Sound Bars.***
 ### Start Pairing
 `PUT /pairing/start`
 
@@ -134,8 +153,10 @@ Save `DEVICE_ID`, you'll need it for the challenge.
 
 
 ## Remote Control Methods
-### Turning Set on From Sleep
+### Turning Television Set on From Sleep
 The HTTP API server turns off when the set is sleeping. Send a WoL magic packet to turn it on. *not supported when set runs in Eco mode.*
+### Turning Sound Bar on from Sleep
+The HTTP API server keeps running while the sound bar is off. Waking has been found to be unnecessary.
 
 ### Power State
 *Authenticated*
@@ -206,8 +227,9 @@ You can string together long remote actions by adding to the `keylist` array.
 | Power Off    | 11      | 0    |
 | Power On     | 11      | 1    |
 | Power Toggle | 11      | 2    |
+> Note: Sound Bars only respond to Codesets 5 and 11. For audio input, see changing inputs below.
 
-## Video Input Methods
+## Video Input Methods (Televisions)
 ### Get currently selected input
 *Authenticated*
 
@@ -298,7 +320,105 @@ You can string together long remote actions by adding to the `keylist` array.
 #### cURL Example
 `curl -k -H "Content-Type: application/json" -H "AUTH: 123A456B" -X PUT -d '{"REQUEST": "MODIFY","VALUE": "HDMI-1","HASHVAL": 1384176329}' https://myVizioTV:9000/menu_native/dynamic/tv_settings/devices/current_input`
 
-## Display Settings
+## Audio Input Settings (Sound Bars)
+### Get currently selected input
+
+`GET /menu_native/dynamic/audio_settings/input/current_input`
+
+#### Response
+
+```json
+{
+  ...
+  "ITEMS": [
+    {
+      "HASHVAL": Integer,
+      "CNAME": String,
+      "TYPE": String,
+      "NAME": String,
+      "VALUE": String
+    }
+  ],
+  "HASHLIST": Array,
+  ...
+  "PARAMETERS": {
+    "FLAT": String,
+    "HELPTEXT": String,
+    "HASHONLY": String
+  }
+}
+```
+#### cURL Example
+
+`curl -k -H "Content-Type: application/json" -X GET http://myVizioSoundbar:9001/menu_native/dynamic/audio_settings/input/current_input`
+
+### Get list of inputs
+
+`GET /menu_native/dynamic/audio_settings/input`
+
+#### Response
+
+```json
+{
+  ...
+  "HASHLIST": Array,
+  "GROUP": String,
+  "NAME": String,
+  "PARAMETERS": {
+    "FLAT": String,
+    "HELPTEXT": String,
+    "HASHONLY": String
+  },
+  "ITEMS": [
+    {
+      "HASHVAL": Integer,
+      "CNAME": String,
+      "TYPE": String,
+      "NAME": String,
+      "VALUE": {
+        "NAME": String,
+        "METADATA": String
+      }
+    },
+    ...
+  ],
+  ...
+  "CNAME": String,
+  "TYPE": String
+}
+```
+
+#### cURL Example
+
+`curl -k -H "Content-Type: application/json" -X GET http://192.168.0.11:9001/menu_native/dynamic/audio_settings/input`
+
+### Change input
+
+`PUT /menu_native/dynamic/audio_settings/input/current_input`
+
+#### Body
+
+```json
+{
+  "REQUEST": "MODIFY",
+  "VALUE": String,
+  "HASHVAL": Integer
+}
+```
+
+#### Expected Values
+| PUT `current_input` | From `input`            |
+| ------------------- | ----------------------- |
+| VALUE               | ITEMS[x].NAME           |
+| HASHVAL             | `current_input`.HASHVAL |
+
+> Note: `VALUE` should be the `NAME` of the input to which you want to set the `current_input`. `HASHVAL` is the hash of the `current_input`, not the hash of the new input. This can be found on both the `current_input` and list of inputs requests. This means that a `current_input` request should always be performed as part of the change. The server will accept setting the `current_input` to the exact same input, as long as the `HASHVAL` is the correct hash from `current_input`.
+
+#### cURL Example
+
+`curl -d {"REQUEST":"MODIFY", "VALUE":"Bluetooth", "HASHVAL": 2144756795}`
+
+## Display Settings (Televisions)
 ### Read Settings
 *Authenticated*
 
